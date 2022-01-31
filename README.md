@@ -1,6 +1,6 @@
 # Filtering In Implicit Neural Network
 
-This repository contains the code for the paper "[Filtering In Implicit Neural Network](yixin26.github.io)".
+This repository contains the code for the paper "[Filtering In Implicit Neural Network](FINN.pdf)".
 
 <img src='filtering_effects.png' align="center" width=1000>
 
