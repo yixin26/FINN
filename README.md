@@ -2,7 +2,7 @@
 
 This repository contains the code for the paper "[Filtering In Implicit Neural Network](yixin26.github.io)".
 
-<img src='filtering_effects.png' align="center" width=600>
+<img src='filtering_effects.png' align="center" width=800>
 
 
 ## Install
