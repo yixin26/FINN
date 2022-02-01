@@ -1,6 +1,6 @@
 # Filtering In Implicit Neural Network
 
-This repository contains the code for the paper "[Filtering In Implicit Neural Network](FINN.pdf)".
+This repository contains the code for the paper "[Filtering In Implicit Neural Network](https://arxiv.org/abs/2201.13013)".
 
 <img src='filtering_effects.png' align="center" width=1000>
 
@@ -35,7 +35,7 @@ Please cite our work if you find it useful:
 @article{zhuang2022finn,
   title={Filtering In Implicit Neural Network},
   author={Zhuang, Yixin},
-  journal={arXiv preprint},
+  journal={arXiv 2201.13013},
   year={2022}
 }
 ```

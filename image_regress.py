@@ -147,7 +147,7 @@ def run_image(filepath,args):
   coords_test, img_test = downsample(coords, img_w, img_h, factor=1), downsample(img_gt, img_w, img_h, factor=1)
 
   #init network and optimizer
-  learning_rate = 1.0e-3
+  learning_rate = args.lr
   num_layers = 3
   if args.model == 'FINN':
     model = FINN(in_features=2,out_features=3, num_layers=num_layers, sigma = sigma, scale=scale)
@@ -163,8 +163,8 @@ def run_image(filepath,args):
 
   #
   filename = filepath.split('/')[-1]
-  num_epochs = 2000
-  test_every_epoch = 100
+  num_epochs = args.nr_epochs
+  test_every_epoch = args.test_epochs
   logdir = os.path.join('logs',filename.split('.')[0])
   writer = SummaryWriter(logdir)
   img_dir = os.path.join(logdir, 'img')
@@ -239,14 +239,15 @@ class Config(object):
                         help='Model to use [\'FINN, FFN\']')
 
     group = parser.add_argument_group('network')
-    group.add_argument('--sigma', type=float, default=10.)
+    group.add_argument('--sigma', type=float, default=10.0)
     group.add_argument('--scale', type=float, default=80.0)
 
     group = parser.add_argument_group('dataset')
-    group.add_argument('--data', type=str, default='data', help='where sdf data is')
+    group.add_argument('--data', type=str, default='data', help='where data is')
 
     group = parser.add_argument_group('training')
     group.add_argument('--nr_epochs', type=int, default=2000, help='total number of epochs to train')
+    group.add_argument('--test_epochs', type=int, default=100, help='total number of epochs to train')
     group.add_argument('--lr', type=float, default=1e-3, help='initial learning rate')
 
     args = parser.parse_args()
