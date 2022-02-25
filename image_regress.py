@@ -16,11 +16,12 @@ def img_psnr(mse):
   return -10.0 * np.log10(2.0 * mse)
 
 class RandFourierFeature(nn.Module):
-  def __init__(self, in_features, num_frequencies=256, sigma=10, scale=16):
+  def __init__(self, in_features, num_frequencies=256, sigma=10, scale=80, range=1.):
     super().__init__()
     self.in_features = in_features
     self.sigma = sigma
     self.scale = scale
+    self.range = range # range of coordinate, e.g. range = 2 if input belongs to [-1,1], and 1 if [0,1].
     self.num_frequencies = num_frequencies
     self.out_features = self.num_frequencies * 2
     self.register_buffer('proj', torch.Tensor(in_features, num_frequencies))
@@ -29,13 +30,14 @@ class RandFourierFeature(nn.Module):
 
   def reset_parameters(self):
     with torch.no_grad():
-      self.proj.copy_(torch.randn_like(self.proj) * (2*np.pi))
+      self.proj.copy_(torch.randn_like(self.proj) * (2*np.pi/self.range))
 
   def forward(self, coords):
     pos_enc = torch.mm(coords.flatten(start_dim=0, end_dim=1), self.proj*self.sigma)
     pos_enc = torch.cat([torch.sin(pos_enc), torch.cos(pos_enc)], axis=-1)
     output = pos_enc.view(coords.shape[0], coords.shape[1], self.out_features)
-    output *= self.scale / np.sqrt(self.num_frequencies)
+    if self.scale != -1:
+      output *= self.scale / np.sqrt(self.num_frequencies) #the magnitude of fourier feature is np.sqrt(self.num_frequencies)
     return output
 
 class FCLayer(nn.Module):
@@ -50,10 +52,10 @@ class FCLayer(nn.Module):
     return output
 
 class FINN(nn.Module):
-  def __init__(self, in_features=3, out_features=1,hidden_features=256, num_layers=3, sigma = 10, scale = 10):
+  def __init__(self, in_features=2, out_features=1,hidden_features=256, num_layers=3, num_frequencies=256,sigma = 10, scale = 80):
     super().__init__()
 
-    self.pos_enc = RandFourierFeature(in_features,sigma = sigma, scale=scale)
+    self.pos_enc = RandFourierFeature(in_features,num_frequencies = num_frequencies,sigma = sigma, scale=scale)
     self.proj = nn.Linear(self.pos_enc.out_features, hidden_features)
     self.num_layers = num_layers
     for i in range(self.num_layers):
@@ -74,10 +76,10 @@ class FINN(nn.Module):
     return output
 
 class FFN(nn.Module):
-  def __init__(self, in_features=3, out_features=1,hidden_features=256, num_layers=3, sigma = 10, scale = 10):
+  def __init__(self, in_features=2, out_features=1,hidden_features=256, num_layers=3, num_frequencies=256, sigma = 10, scale = -1):
     super().__init__()
 
-    self.pos_enc = RandFourierFeature(in_features,sigma = sigma, scale=scale)
+    self.pos_enc = RandFourierFeature(in_features,num_frequencies = num_frequencies,sigma = sigma, scale=scale)
     self.num_layers = num_layers
     for i in range(self.num_layers):
       if i==0:
@@ -132,11 +134,42 @@ def downsample(input, img_w, img_h, factor=2):
   output = output[::factor, ::factor, :].reshape(1, -1, channel)
   return output
 
-def run_image(filepath,args):
-  sigma, scale = args.sigma, args.scale
+def test_image(args):
+  if not os.path.isfile(args.ckpt):
+    print('error ckpt path')
+    exit()
 
+  if args.model == 'FINN':
+    model = FINN(in_features=2,out_features=3, num_layers=args.num_layers, num_frequencies = args.num_frequencies,sigma = args.sigma, scale=args.scale)
+  elif args.model == 'FFN':
+    model = FFN(in_features=2,out_features=3, num_layers=args.num_layers, num_frequencies = args.num_frequencies, sigma = args.sigma, scale=-1)
+  else:
+    print('no active network, quit')
+    exit()
+
+  print(model)
+  model.cuda()
+
+  # load pretrained model if exist
+  print('loading checkpoint %s' % args.ckpt)
+  model.load_state_dict(torch.load(args.ckpt))
+
+  coords = get_mgrid(args.res, args.res, dim=2, offset=0.5) # [-1, 1]
+  coords = np.expand_dims(coords, axis=0)
+  coords = torch.from_numpy(coords).cuda()
+
+  model.eval()
+  with torch.no_grad():
+    img_pred_test = model(coords)
+
+  print('save image to', args.test_file + '.png')
+  img_pred_test = img_pred_test.clamp(0.0, 1.0)  # clip pixel velues to [0, 1]
+  img_pred_test = img_pred_test.view(args.res, args.res, -1).detach().cpu().numpy()
+  img_pred_test = (img_pred_test * 255).astype(np.uint8)
+  imageio.imwrite(args.test_file + '.png', img_pred_test)
+
+def run_image(filepath,args):
   print('read image: ',filepath)
-  #load train & test data
   image_data = ImageLoader(filepath)
   img_w, img_h = image_data.w, image_data.h
   data = image_data[0]
@@ -147,19 +180,17 @@ def run_image(filepath,args):
   coords_test, img_test = downsample(coords, img_w, img_h, factor=1), downsample(img_gt, img_w, img_h, factor=1)
 
   #init network and optimizer
-  learning_rate = args.lr
-  num_layers = 3
   if args.model == 'FINN':
-    model = FINN(in_features=2,out_features=3, num_layers=num_layers, sigma = sigma, scale=scale)
+    model = FINN(in_features=2,out_features=3, num_layers=args.num_layers, num_frequencies = args.num_frequencies,sigma = args.sigma, scale=args.scale)
   elif args.model == 'FFN':
-    model = FFN(in_features=2,out_features=3, num_layers=num_layers, sigma = sigma, scale=scale)
+    model = FFN(in_features=2,out_features=3, num_layers=args.num_layers, num_frequencies = args.num_frequencies,sigma = args.sigma, scale=-1)
   else:
     print('no active network, quit')
     exit()
 
   print(model)
   model.cuda()
-  optim = torch.optim.Adam(lr=learning_rate, params=model.parameters())
+  optim = torch.optim.Adam(lr=args.lr, params=model.parameters())
 
   #
   filename = filepath.split('/')[-1]
@@ -171,7 +202,7 @@ def run_image(filepath,args):
   ckpt_dir = os.path.join(logdir, 'checkpoints')
   if not os.path.exists(ckpt_dir): os.makedirs(ckpt_dir)
   if not os.path.exists(img_dir): os.makedirs(img_dir)
-  img_name = os.path.join(logdir,filename.split('.')[0])
+  img_name = os.path.join(img_dir,filename.split('.')[0])
   fid = open(os.path.join(logdir, 'summaries.csv'), 'w')
   tqdm.write("Epoch, Loss, Test PSNR, Train PSNR", fid)
 
@@ -241,27 +272,38 @@ class Config(object):
     group = parser.add_argument_group('network')
     group.add_argument('--sigma', type=float, default=10.0)
     group.add_argument('--scale', type=float, default=80.0)
+    group.add_argument('--num_frequencies', type=int, default=256, help='number of frequencies')
+    group.add_argument('--num_layers', type=int, default=3, help='number of hidden layers')
 
     group = parser.add_argument_group('dataset')
     group.add_argument('--data', type=str, default='data', help='where data is')
+    group.add_argument('--res', type=int, default=256, help='sdf volume resolution')
 
     group = parser.add_argument_group('training')
     group.add_argument('--nr_epochs', type=int, default=2000, help='total number of epochs to train')
     group.add_argument('--test_epochs', type=int, default=100, help='total number of epochs to train')
     group.add_argument('--lr', type=float, default=1e-3, help='initial learning rate')
+    group.add_argument('--ckpt', type=str, default='', help='pretrained model')
+
+    group = parser.add_argument_group('testing')
+    group.add_argument('--test_file', type=str, default='', help='save file')
 
     args = parser.parse_args()
     return parser, args
 
 if __name__ == '__main__':
     args = Config().args
-    if os.path.isdir(args.data):
-      run_dataset(args) #run all images in that folder
-    elif os.path.isfile(args.data):
-      run_image(args.data,args) #run one image
+    if args.test_file:
+      test_image(args)
     else:
-      print('error path')
+      if os.path.isdir(args.data):
+        run_dataset(args) #run all images in that folder
+      elif os.path.isfile(args.data):
+        run_image(args.data,args) #run one image
+      else:
+        print('error path')
 
 
-#(FINN) ➜  FINN python image_regress.py -g 0 --data './data' --model FINN
-#(FINN) ➜  FINN python image_regress.py -g 0 --data './data' --model FFN
+#(Training dataset) ➜  python image_regress.py -g 0 --data './data' --model FINN
+#(Training single file) ➜  python image_regress.py -g 0 --data './data/div2k_000.bmp' --model FINN
+#(Testing) ➜  python image_regress.py --ckpt logs/div2k_000/checkpoints/model_2000.pth --test_file test --model FINN -g 3 --res 1000
