@@ -1,6 +1,6 @@
 # Filtering In Neural Implicit Functions
 
-This repository contains the code for the paper "[Filtering In Neural Implicit Functions](https://arxiv.org/abs/2201.13013)".
+This repository contains the code for the paper "[Filtering In Neural Implicit Functions](https://yixin26.github.io/projects/FINN/Filtering_in_Neural_Implicit_Functions.pdf)".
 
 <img src='fig/filtering_effects.png' align="center" width=1000>
 
