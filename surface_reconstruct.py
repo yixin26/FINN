@@ -21,23 +21,17 @@ def sdf_loss(sdf_pred, coords, sdf_gt, normal_gt):
 
   mask = sdf_gt != -1  # (B, N, 1)
   sdf_loss = sdf_pred[mask].abs().mean()
-  c = 40 #
-  inter_loss = torch.exp(-c * torch.abs(sdf_pred[mask.logical_not()])).mean()
+
+  inter_loss = torch.exp(-50 * torch.abs(sdf_pred[mask.logical_not()])).mean()
   mask = mask.squeeze(-1)
-  # option 1: Spline PE uses
   normal_loss = (gradient[mask, :] - normal_gt[mask, :]).norm(2, dim=-1).mean()
   # option 2: SIREN uses
   #normal_loss = (1 - F.cosine_similarity(gradient[mask, :], normal_gt[mask, :], dim=-1)[..., None]).mean()
-
   grad_loss = (gradient[mask.logical_not(), :].norm(2, dim=-1) - 1).abs().mean()
 
-  # option 1: Spline PE
-  losses = [sdf_loss * 10.0, inter_loss * 0.1, normal_loss * 1.0, grad_loss * 0.1]
+  losses = [sdf_loss * 1000, inter_loss * 10, normal_loss * 20, grad_loss * 1]
   # option 2: SIREN
   #losses = [sdf_loss * 3e3, inter_loss * 1e2, normal_loss * 1e2, grad_loss * 5e1]
-
-  # !!! if outliers are generated, slightly increasing the weight of inter_loss or const *c*
-  # to resist the sdf of off-surface points from getting close to zero.
 
   total_loss = torch.stack(losses).sum()
   names = ['sdf', 'inter', 'normal_constraint', 'grad_constraint', 'total_train_loss']
@@ -59,6 +53,7 @@ class RandFourierFeature(nn.Module):
 
   def reset_parameters(self):
     with torch.no_grad():
+      torch.manual_seed(123456) #sdf training is sensitive to gaussian fourier feature. so use a fixed one
       self.proj.copy_(torch.randn_like(self.proj) * (2*np.pi/self.range))
 
   def forward(self, coords):
@@ -85,7 +80,7 @@ class FINN(nn.Module):
     super().__init__()
 
     self.pos_enc = RandFourierFeature(in_features, num_frequencies = num_frequencies, sigma=sigma, scale=scale)
-    self.proj = nn.Linear(self.pos_enc.out_features, hidden_features)
+    self.scaling = nn.Linear(self.pos_enc.out_features, hidden_features)
     self.num_layers = num_layers
     for i in range(self.num_layers):
       if i == 0:
@@ -97,7 +92,7 @@ class FINN(nn.Module):
 
   def forward(self, coords):
     output = self.pos_enc(coords)
-    fx = self.proj(self.pos_enc(coords))
+    fx = self.scaling(output)
     for i in range(self.num_layers):
       fc = getattr(self, f'FC_{i:d}')
       output = F.normalize(fc(output), p=2, dim=-1) * fx
@@ -152,14 +147,14 @@ class PointCloudLoader(Dataset):
 
     self.coords = (coords - coord_min) / (coord_max - coord_min)
     self.coords -= 0.5
-    self.coords *= 2.
+    self.coords *= 2.* 0.9 #points lie in box ~ [-1,1]*0.9
 
     self.on_surface_points = on_surface_points
-    print('point segments:',self.coords.shape[0] // self.on_surface_points)
+    #print('point segments:',self.coords.shape[0] // self.on_surface_points)
 
 
   def __len__(self):
-    return self.coords.shape[0] // self.on_surface_points
+    return 1 #self.coords.shape[0] // self.on_surface_points
 
   def __getitem__(self, idx):
     point_cloud_size = self.coords.shape[0]
@@ -210,7 +205,7 @@ def create_mesh(epoch, model, mesh_dir, N=256, max_batch=64**3, level=0):
   sdf_values = calc_sdf(model, N, max_batch)
   vtx, faces = np.zeros((0, 3)), np.zeros((0, 3))
   try:
-    vtx, faces, _, _ = skimage.measure.marching_cubes_lewiner(sdf_values, level)
+    vtx, faces, _, _ = skimage.measure.marching_cubes(sdf_values, level)
   except:
     pass
   if vtx.size == 0 or faces.size == 0:
@@ -339,7 +334,7 @@ class Config(object):
 
     group = parser.add_argument_group('network')
     group.add_argument('--sigma', type=float, default=1.0)
-    group.add_argument('--scale', type=float, default=80.0)
+    group.add_argument('--scale', type=float, default=-1.0)
     group.add_argument('--num_frequencies', type=int, default=128, help='number of frequencies')
     group.add_argument('--num_layers', type=int, default=4, help='number of hidden layers')
 
@@ -349,10 +344,10 @@ class Config(object):
 
     group = parser.add_argument_group('training')
     group.add_argument('--nr_epochs', type=int, default=10000, help='total number of epochs to train')
-    group.add_argument('--test_epochs', type=int, default=100, help='total number of epochs to train')
-    group.add_argument('--lr', type=float, default=1e-3, help='initial learning rate')
+    group.add_argument('--test_epochs', type=int, default=1000, help='total number of epochs to train')
+    group.add_argument('--lr', type=float, default=5e-4, help='initial learning rate')
     group.add_argument('--ckpt', type=str, default='', help='pretrained model')
-    group.add_argument('--pc_num', type=int, default=100000, help='num of samples in one step')
+    group.add_argument('--pc_num', type=int, default=32**3, help='num of samples in one step')
 
     group = parser.add_argument_group('testing')
     group.add_argument('--test_file', type=str, default='', help='save file')

@@ -1,0 +1,15 @@
+expname = fern_test
+basedir = ./logs
+datadir = ../nerf-pytorch/data/nerf_llff_data/fern
+dataset_type = llff
+
+factor = 8
+llffhold = 8
+
+N_rand = 1024
+N_samples = 128
+N_importance = 0
+
+use_viewdirs = False
+raw_noise_std = 1e0
+

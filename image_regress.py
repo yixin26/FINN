@@ -56,7 +56,7 @@ class FINN(nn.Module):
     super().__init__()
 
     self.pos_enc = RandFourierFeature(in_features,num_frequencies = num_frequencies,sigma = sigma, scale=scale)
-    self.proj = nn.Linear(self.pos_enc.out_features, hidden_features)
+    self.scaling = nn.Linear(self.pos_enc.out_features, hidden_features)
     self.num_layers = num_layers
     for i in range(self.num_layers):
       if i==0:
@@ -68,7 +68,7 @@ class FINN(nn.Module):
 
   def forward(self, coords):
     output = self.pos_enc(coords)
-    fx = self.proj(self.pos_enc(coords))
+    fx = self.scaling(output)
     for i in range(self.num_layers):
       fc = getattr(self, f'FC_{i:d}')
       output = F.normalize(fc(output), p=2, dim=-1) * fx
@@ -168,7 +168,7 @@ def test_image(args):
   img_pred_test = (img_pred_test * 255).astype(np.uint8)
   imageio.imwrite(args.test_file + '.png', img_pred_test)
 
-def run_image(filepath,args):
+def train_image(filepath,args):
   print('read image: ',filepath)
   image_data = ImageLoader(filepath)
   img_w, img_h = image_data.w, image_data.h
@@ -244,14 +244,14 @@ def run_image(filepath,args):
 
   fid.close()
 
-def run_dataset(args):
+def train_dataset(args):
   dir = args.data
   files = os.listdir(dir)
   files.sort()
   print(len(files),'images for regression')
   for filename in files:
     filepath = os.path.join(dir, filename)
-    run_image(filepath,args)
+    train_image(filepath,args)
 
 class Config(object):
 
@@ -297,9 +297,9 @@ if __name__ == '__main__':
       test_image(args)
     else:
       if os.path.isdir(args.data):
-        run_dataset(args) #run all images in that folder
+        train_dataset(args) #run all images in that folder
       elif os.path.isfile(args.data):
-        run_image(args.data,args) #run one image
+        train_image(args.data,args) #run one image
       else:
         print('error path')
 

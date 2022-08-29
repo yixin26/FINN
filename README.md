@@ -18,19 +18,29 @@ The code has been tested on Ubuntu 18.04, please follow the following instructio
 
 ## Regress images
 - Run the following command: `python image_regress.py -g 0 --data './data' --model FINN` to regress all images located at folder `data` using the network `FINN` on gpu `0`.
-- To fit a single image, use the following command: `python image_regress.py -g 0 --data './data/test.png' --model FINN` instead.
-- For an alternative network, e.g., `FFN`, use the command: `python image_regress.py -g 0 --data './data/test.png' --model FFN`.
+- To fit a single image, use the following command: `python image_regress.py -g 0 --data './data/reference_1.png' --model FINN` instead.
+- For an alternative network, e.g., `FFN`, use the command: `python image_regress.py -g 0 --data './data/reference_1.png' --model FFN`.
 - Generate an image with arbitary resolution, e.g., `1000`, run `python image_regress.py --ckpt pretrained_checkpoint_path --test_file save_to_file --model FINN -g 3 --res 1000`.
 
 ### Statistics
 - Run the following command: `python statistics.py` for PSNR statistics.
 - For the ꟻLIP metric, please use the code from [NVIDIA](https://research.nvidia.com/publication/2020-07_FLIP)
 
+
 <img src='fig/3d_rec.png' align="center" width=1000>
 
 ## Reconstruct 3D Surface from point cloud
 - Run the following command: `python surface_reconstruct.py --data './test.xyz' --pc_num 100000 --model FINN -g 0` to train the point cloud using the network `FINN`. At each iteration, `100000` points are randomly sampled. 
 - Generate a mesh from the signed distance field with an arbitrary resolution, e.g., `1600`, run `python surface_reconstruct.py --ckpt pretrained_checkpoint_path --test_file save_to_file  --model FINN -g 3 --res 1600`.
+
+
+
+## Novel view synthesis
+- Download the datasets, following the instruction of [nerf-pytorch](https://github.com/yenchenlin/nerf-pytorch/).
+- We use a simplified version of NeRF for demonstration. We replace the 'Positional Encodering' with 'Gaussian Random Fourier Feature Mapping' and apply 'Filtering' to MLPs. The source code is at file folder `./tiny-nerf`.
+- Run the following command: `python run_nerf.py --config ./configs/fern.txt -g 0` to train on 'Fern' dataset. The testing PSNR will be saved.
+
+
 
 ## Cite
 
