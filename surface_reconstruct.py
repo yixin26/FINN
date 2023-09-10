@@ -29,7 +29,9 @@ def sdf_loss(sdf_pred, coords, sdf_gt, normal_gt):
   #normal_loss = (1 - F.cosine_similarity(gradient[mask, :], normal_gt[mask, :], dim=-1)[..., None]).mean()
   grad_loss = (gradient[mask.logical_not(), :].norm(2, dim=-1) - 1).abs().mean()
 
-  losses = [sdf_loss * 1000, inter_loss * 10, normal_loss * 20, grad_loss * 1]
+  #losses = [sdf_loss * 1000, inter_loss * 10, normal_loss * 20, grad_loss * 1]
+  losses = [sdf_loss * 10.0, inter_loss * 0.2, normal_loss * 2.0, grad_loss * 0.1]
+
   # option 2: SIREN
   #losses = [sdf_loss * 3e3, inter_loss * 1e2, normal_loss * 1e2, grad_loss * 5e1]
 
@@ -37,6 +39,7 @@ def sdf_loss(sdf_pred, coords, sdf_gt, normal_gt):
   names = ['sdf', 'inter', 'normal_constraint', 'grad_constraint', 'total_train_loss']
   loss_dict = dict(zip(names, losses + [total_loss]))
   return loss_dict
+
 
 class RandFourierFeature(nn.Module):
   def __init__(self, in_features, num_frequencies=128, sigma=1, scale=80, range=2.):
@@ -53,7 +56,7 @@ class RandFourierFeature(nn.Module):
 
   def reset_parameters(self):
     with torch.no_grad():
-      torch.manual_seed(123456) #sdf training is sensitive to gaussian fourier feature. so use a fixed one
+      torch.manual_seed(0) #sdf training is sensitive to gaussian fourier feature. so use a fixed one
       self.proj.copy_(torch.randn_like(self.proj) * (2*np.pi/self.range))
 
   def forward(self, coords):
@@ -99,6 +102,31 @@ class FINN(nn.Module):
     output = self.FC_final(output)
     return output
 
+class FINN_layerwise(nn.Module):
+  def __init__(self, in_features=3, out_features=1, hidden_features=256,num_layers=4, num_frequencies=128, sigma = 1, scale = 80):
+    super().__init__()
+
+    self.pos_enc = RandFourierFeature(in_features, num_frequencies = num_frequencies, sigma=sigma, scale=scale)
+    self.num_layers = num_layers
+    for i in range(self.num_layers):
+      if i == 0:
+        in_channel = self.pos_enc.out_features
+      else:
+        in_channel = hidden_features
+      setattr(self, f'FC_{i:d}', FCLayer(in_channel, hidden_features, nn.ReLU(inplace=True)))
+      setattr(self, f'SC_{i:d}', nn.Linear(self.pos_enc.out_features, hidden_features))
+
+    self.FC_final = FCLayer(hidden_features, out_features, nn.Identity())
+
+  def forward(self, coords):
+    output = self.pos_enc(coords)
+    for i in range(self.num_layers):
+      fc = getattr(self, f'FC_{i:d}')
+      fx = getattr(self, f'SC_{i:d}')(self.pos_enc(coords))
+      output = F.normalize(fc(output), p=2, dim=-1) * fx
+    output = self.FC_final(output)
+    return output
+
 class FFN(nn.Module):
   def __init__(self, in_features=3, out_features=1,hidden_features=256, num_layers=4, num_frequencies=128, sigma = 1, scale = -1):
     super().__init__()
@@ -129,7 +157,7 @@ def get_mgrid(size, dim=2, offset=0.5, r=-1):
   output = output.reshape(size**dim, dim)
   return output
 
-class PointCloudLoader(Dataset):
+class PointCloudLoader_(Dataset): ##3D scans
   def __init__(self, pointcloud_path, on_surface_points):
     super().__init__()
 
@@ -149,12 +177,60 @@ class PointCloudLoader(Dataset):
     self.coords -= 0.5
     self.coords *= 2.* 0.9 #points lie in box ~ [-1,1]*0.9
 
-    self.on_surface_points = on_surface_points
-    #print('point segments:',self.coords.shape[0] // self.on_surface_points)
-
+    self.on_surface_points = min(on_surface_points,point_cloud.shape[0])
+    print('batch size:', self.on_surface_points, ' x 2')
 
   def __len__(self):
-    return 1 #self.coords.shape[0] // self.on_surface_points
+    return self.coords.shape[0] // self.on_surface_points
+
+  def __getitem__(self, idx):
+    point_cloud_size = self.coords.shape[0]
+
+    off_surface_samples = self.on_surface_points  # **2
+    total_samples = self.on_surface_points + off_surface_samples
+
+    # Random coords
+    rand_idcs = np.random.choice(point_cloud_size, size=self.on_surface_points)
+
+    on_surface_coords = self.coords[rand_idcs, :]
+    on_surface_normals = self.normals[rand_idcs, :]
+
+    off_surface_coords = np.random.uniform(-1, 1, size=(off_surface_samples, 3))
+    off_surface_normals = np.ones((off_surface_samples, 3)) * -1
+
+    sdf = np.zeros((total_samples, 1))  # on-surface = 0
+    sdf[self.on_surface_points:, :] = -1  # off-surface = -1
+
+    coords = np.concatenate((on_surface_coords, off_surface_coords), axis=0)
+    normals = np.concatenate((on_surface_normals, off_surface_normals), axis=0)
+
+    return torch.from_numpy(coords).float(),torch.from_numpy(sdf).float(),torch.from_numpy(normals).float()
+
+class PointCloudLoader(Dataset): #abc dataset
+  def __init__(self, pointcloud_path, on_surface_points):
+    super().__init__()
+
+    print("Loading point cloud")
+    mesh = trimesh.load(pointcloud_path)
+    print(mesh.vertices.shape[0], " points loaded")
+
+    coords = mesh.vertices
+    self.normals = mesh.vertex_normals
+
+    # Reshape point cloud such that it lies in bounding box of (-1, 1)
+    coords -= np.mean(coords, axis=0, keepdims=True)
+    coord_max = np.amax(coords)
+    coord_min = np.amin(coords)
+
+    self.coords = (coords - coord_min) / (coord_max - coord_min)
+    self.coords -= 0.5
+    self.coords *= 2.* 0.9 #points lie in box ~ [-1,1]*0.9
+
+    self.on_surface_points = min(on_surface_points,mesh.vertices.shape[0])
+    print('batch size:', self.on_surface_points, ' x 2')
+
+  def __len__(self):
+    return self.coords.shape[0] // self.on_surface_points
 
   def __getitem__(self, idx):
     point_cloud_size = self.coords.shape[0]
@@ -288,6 +364,8 @@ def run_sdf(filepath,args):
 
       model.train()
       avg_loss = []
+      avg_sdfloss,avg_interloss,avg_normalloss,avg_gradloss = [],[],[],[]
+
       for i, data in enumerate(dataloader):
         coords = data[0].cuda().requires_grad_()
         sdf_gt, normal_gt = data[1].cuda(), data[2].cuda()
@@ -296,6 +374,16 @@ def run_sdf(filepath,args):
 
         losses = sdf_loss(sdf, coords, sdf_gt, normal_gt)
         total_loss = losses['total_train_loss']
+
+        if True:
+          sdfloss = losses['sdf'].detach().cpu().item()
+          interloss = losses['inter'].detach().cpu().item()
+          normalloss = losses['normal_constraint'].detach().cpu().item()
+          gradloss = losses['grad_constraint'].detach().cpu().item()
+          avg_sdfloss.append(sdfloss)
+          avg_interloss.append(interloss)
+          avg_normalloss.append(normalloss)
+          avg_gradloss.append(gradloss)
 
         optim.zero_grad()
         total_loss.backward()
@@ -307,14 +395,26 @@ def run_sdf(filepath,args):
 
         pbar.update(1)
 
-        if i % 100 == 0:
-          tqdm.write("Epoch %d, Total loss %0.6f" % (epoch, np.mean(avg_loss)))
-          tqdm.write("Epoch %d, Total loss %0.6f" % (epoch, np.mean(avg_loss)), fid)
+
+        if epoch%10==0 and i % 100 == 0:
+          #tqdm.write("Epoch %d, Total loss %0.6f" % (epoch, np.mean(avg_loss)))
+          #tqdm.write("Epoch %d, Total loss %0.6f" % (epoch, np.mean(avg_loss)), fid)
+          tqdm.write("Epoch %d, Total loss %0.6f, sdf loss %0.6f, inter loss %0.6f, norm loss %0.6f, grad loss %0.6f" % (epoch, np.mean(avg_loss), np.mean(avg_sdfloss),np.mean(avg_interloss), np.mean(avg_normalloss), np.mean(avg_gradloss)))
+          tqdm.write("Epoch %d, Total loss %0.6f, sdf loss %0.6f, inter loss %0.6f, norm loss %0.6f, grad loss %0.6f" % (epoch, np.mean(avg_loss), np.mean(avg_sdfloss),np.mean(avg_interloss), np.mean(avg_normalloss), np.mean(avg_gradloss)),fid)
 
   ckpt_name = os.path.join(ckpt_dir, 'model_final.pth')
   torch.save(model.state_dict(), ckpt_name)
   create_mesh('%04d' % (num_epochs), model, mesh_dir, N=args.res, max_batch=64 ** 3, level=0)
   fid.close()
+
+def run_dataset(args):
+  dir = args.data
+  files = os.listdir(dir)
+  files.sort()
+  print(len(files),'shapes for reconstruction')
+  for filename in files:
+    filepath = os.path.join(dir, filename)
+    run_sdf(filepath,args)
 
 class Config(object):
 
@@ -362,8 +462,11 @@ if __name__ == '__main__':
     else:
       if os.path.isfile(args.data):
         run_sdf(args.data,args)
+      elif os.path.isdir(args.data):
+        run_dataset(args)
       else:
         print('error file path')
 
-#(Training) ➜  python surface_reconstruct.py --data './thai_statue.xyz' --pc_num 100000 --model FINN -g 0
+#(Training) ➜  python surface_reconstruct.py --data './thai_statue.xyz' --pc_num 100000 --model FINN -g 0 #for 3D scans
+#(Training) ➜  python surface_reconstruct.py --data './thai_statue.obj' --pc_num 100000 --model FINN -g 0 #for abc dataset (10k/train/2048)
 #(Testing) ➜  python surface_reconstruct.py --ckpt logs/thai_statue/checkpoints/model_final.pth --test_file thai_statue_finn  --model FINN -g 3 --res 1600

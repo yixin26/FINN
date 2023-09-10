@@ -39,7 +39,7 @@ class NeRF(nn.Module):
     def __init__(self, D=4, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[], use_viewdirs=False):
         super(NeRF, self).__init__()
 
-        g1, g2 = 10,1 #modify the frequency parameter here
+        g1, g2 = 12,1 #modify the frequency parameter here
         self.embed = RandFourierFeature(in_features = input_ch, num_frequencies=256, sigma=g1, scale=-1)
         self.embed_scaling = RandFourierFeature(in_features = input_ch, num_frequencies=256, sigma=g2, scale=-1)
         self.scaling = nn.Linear(self.embed.out_dim, W)

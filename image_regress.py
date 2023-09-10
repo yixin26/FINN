@@ -304,6 +304,6 @@ if __name__ == '__main__':
         print('error path')
 
 
-#(Training dataset) ➜  python image_regress.py -g 0 --data './data' --model FINN
-#(Training single file) ➜  python image_regress.py -g 0 --data './data/div2k_000.bmp' --model FINN
+#(Training for a dataset) ➜  python image_regress.py -g 0 --data './data' --model FINN
+#(Training for a single file) ➜  python image_regress.py -g 0 --data './data/div2k_000.bmp' --model FINN
 #(Testing) ➜  python image_regress.py --ckpt logs/div2k_000/checkpoints/model_2000.pth --test_file test --model FINN -g 3 --res 1000

@@ -29,6 +29,3 @@ for dir in dirs:
         std_psnr = np.sqrt(((val_psnr - mean_psnr)**2).mean())
         print('Image set ',imcat, ' has ',len(val_psnr), ' images, and the avg psnr is: ', mean_psnr, ' var psnr is: ',std_psnr)
     fid.close()
-
-
-
